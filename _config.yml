@@ -1,0 +1,13 @@
+title: AI News Blog
+subtitle: ''
+description: ''
+keywords:
+author: Admin
+language: zh-CN
+timezone: ''
+
+url: https://nchina.github.io/ai-news-blog
+root: /ai-news-blog/
+permalink: :year/:month/:day/:title/
+
+theme: landscape
