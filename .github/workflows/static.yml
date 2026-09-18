@@ -3,6 +3,11 @@ name: Deploy Hexo to GitHub Pages
 on:
   push:
     branches: ["main"]
+  # 增加下面这几行：当 AI 工作流成功结束时自动运行此部署流程
+  workflow_run:
+    workflows: ["AI Auto Post Generator"]
+    types:
+      - completed
 
 permissions:
   contents: read
@@ -15,6 +20,8 @@ concurrency:
 
 jobs:
   build:
+    # 增加状态过滤：仅在 AI 脚本成功执行时才触发部署
+    if: ${{ github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
