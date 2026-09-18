@@ -1,0 +1,83 @@
+name: AI Auto Post Generator
+
+on:
+  workflow_dispatch: # 支持在 GitHub Actions 页面手动点击按钮触发发文
+  # 如果想设置每天定时触发（如 UTC 时间 0点 / 北京时间早上 8点），取消下面两行的注释：
+  # schedule:
+  #   - cron: '0 0 * * *'
+
+jobs:
+  generate-and-post:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Generate Post via DeepSeek
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          node -e '
+          const fs = require("fs");
+          const https = require("https");
+
+          const dateStr = new Date().toISOString().split("T")[0];
+          const fileName = `source/_posts/ai-news-${dateStr}.md`;
+
+          const prompt = "请帮我汇总最新的 3 条重大 AI 行业动态或技术进展，写成一篇简洁明了的博客文章。请直接输出 Markdown 格式，开头必须包含 Hexo 的 Front Matter 属性（包括 title: AI 每日资讯速递 (" + dateStr + "), date: " + dateStr + ", tags: [AI, 每日新闻]），语言为中文。";
+
+          const data = JSON.stringify({
+            model: "deepseek-chat",
+            messages: [{ role: "user", content: prompt }]
+          });
+
+          const req = https.request({
+            hostname: "api.deepseek.com",
+            path: "/chat/completions",
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": "Bearer " + process.env.DEEPSEEK_API_KEY
+            }
+          }, (res) => {
+            let body = "";
+            res.on("data", chunk => body += chunk);
+            res.on("end", () => {
+              try {
+                const resData = JSON.parse(body);
+                if (!resData.choices || !resData.choices[0]) {
+                  console.error("API 返回异常：", body);
+                  process.exit(1);
+                }
+                let reply = resData.choices[0].message.content;
+                reply = reply.replace(/^```markdown\n/, "").replace(/\n```$/, "");
+                fs.writeFileSync(fileName, reply);
+                console.log("文章生成成功，文件保存为：" + fileName);
+              } catch (e) {
+                console.error("解析 API 响应失败：", e, body);
+                process.exit(1);
+              }
+            });
+          });
+
+          req.on("error", (e) => {
+            console.error("请求失败：", e);
+            process.exit(1);
+          });
+
+          req.write(data);
+          req.end();
+          '
+
+      - name: Commit & Push New Post
+        run: |
+          git config --global user.name "AI-Bot"
+          git config --global user.email "bot@github.com"
+          git add source/_posts/
+          git commit -m "docs: auto-generate daily AI news post" || exit 0
+          git push
