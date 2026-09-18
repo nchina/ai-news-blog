@@ -2,8 +2,10 @@ name: AI Auto Post Generator
 
 on:
   workflow_dispatch:
+  # 如果需要定时自动发送（例如北京时间每天早上 8点），可以取消下面两行的注释：
+  # schedule:
+  #   - cron: '0 0 * * *'
 
-# 显式声明赋予写权限
 permissions:
   contents: write
 
@@ -14,7 +16,6 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          # 使用当前的 GITHUB_TOKEN 进行 Push
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
@@ -33,7 +34,8 @@ jobs:
           const dateStr = new Date().toISOString().split("T")[0];
           const fileName = `source/_posts/ai-news-${dateStr}.md`;
 
-          const prompt = "请帮我汇总最新的 3 条重大 AI 行业动态或技术进展，写成一篇简洁明了的博客文章。请直接输出 Markdown 格式，开头必须包含 Hexo 的 Front Matter 属性（包含 title: AI 每日资讯速递 (" + dateStr + "), date: " + dateStr + ", tags: [AI, 每日新闻]），语言为中文。";
+          // 优化提示词：严禁 AI 在正文生成一级标题 (#)，防止与 Hexo 的 Front Matter 标题重复
+          const prompt = "请帮我汇总最新的 3 条重大 AI 行业动态或技术进展，写成一篇简洁明了的博客文章。请直接输出 Markdown 格式，开头必须包含 Hexo 的 Front Matter 属性（包含 title: AI 每日资讯速递 (" + dateStr + "), date: " + dateStr + ", tags: [AI, 每日新闻]），语言为中文。注意：正文开头严禁再次输出任何标题或一级标题（#），请直接从简短的导语或第 1 条资讯内容开始写。";
 
           const data = JSON.stringify({
             model: "deepseek-chat",
@@ -59,6 +61,7 @@ jobs:
                   process.exit(1);
                 }
                 let reply = resData.choices[0].message.content;
+                // 清理多余的 markdown 代码块标记
                 reply = reply.replace(/^```markdown\n/, "").replace(/\n```$/, "");
                 fs.writeFileSync(fileName, reply);
                 console.log("文章生成成功，文件保存为：" + fileName);
