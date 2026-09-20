@@ -1,90 +1,106 @@
 name: AI Auto Post Generator
 
 on:
-  workflow_dispatch:
-  # 如果需要定时自动发送（例如北京时间每天早上 8点），可以取消下面两行的注释：
-  # schedule:
-  #   - cron: '0 0 * * *'
-
-permissions:
-  contents: write
+  schedule:
+    # 每天 UTC 时间 00:00 执行（对应北京时间每天早晨 08:00）
+    - cron: '0 0 * * *'
+  workflow_dispatch: # 保留手动触发按钮，方便随时手动补发
 
 jobs:
-  generate-and-post:
+  write-and-deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repo
+      - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          node-version: '20'
+          python-version: '3.x'
 
-      - name: Generate Post via DeepSeek
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Generate AI Post with DeepSeek
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
-          node -e '
-          const fs = require("fs");
-          const https = require("https");
+          python - << 'EOF'
+          import os
+          import requests
+          from datetime import datetime
 
-          const dateStr = new Date().toISOString().split("T")[0];
-          const fileName = `source/_posts/ai-news-${dateStr}.md`;
+          api_key = os.environ.get("DEEPSEEK_API_KEY")
+          if not api_key:
+              raise ValueError("Missing DEEPSEEK_API_KEY secret")
 
-          // 优化提示词：严禁 AI 在正文生成一级标题 (#)，防止与 Hexo 的 Front Matter 标题重复
-          const prompt = "请帮我汇总最新的 3 条重大 AI 行业动态或技术进展，写成一篇简洁明了的博客文章。请直接输出 Markdown 格式，开头必须包含 Hexo 的 Front Matter 属性（包含 title: AI 每日资讯速递 (" + dateStr + "), date: " + dateStr + ", tags: [AI, 每日新闻]），语言为中文。注意：正文开头严禁再次输出任何标题或一级标题（#），请直接从简短的导语或第 1 条资讯内容开始写。";
+          today_str = datetime.now().strftime("%Y-%m-%d")
+          file_name = f"source/_posts/{today_str}-ai-news.md"
 
-          const data = JSON.stringify({
-            model: "deepseek-chat",
-            messages: [{ role: "user", content: prompt }]
-          });
+          # 包含极简过滤规则与格式控制的 Prompt
+          prompt = f"""
+          你是一个专业的 AI 行业资深分析师。请为今天的“AI 每日资讯速递”撰写一篇简报。
 
-          const req = https.request({
-            hostname: "api.deepseek.com",
-            path: "/chat/completions",
-            method: "POST",
-            headers: {
+          【筛选与过滤规则】
+          1. 严禁包含：未经证实的八卦炒作、纯概念性的融资金额宣布（除非金额极其巨大或涉及顶级实验室）、小厂的营销软文。
+          2. 优先挑选：有代码开源、有论文发布、有实际产品上线、对行业架构有颠覆性影响的动态。
+          3. 严格控制数量：从今日所有新闻中精选出最具备决定性意义的 3~5 条，多一条都不写。
+
+          【排版格式要求】
+          - 不要输出全局大标题（如 # AI 每日资讯速递），开头直接用一段简短的话引入。
+          - 采用 Markdown 格式，每条新闻使用加粗小标题（如 ## 1. 标题名称），并附带 2~3 句核心要点与影响分析。
+          - 语言精炼，突出硬核技术与落地价值。
+          """
+
+          url = "https://api.deepseek.com/chat/completions"
+          headers = {
               "Content-Type": "application/json",
-              "Authorization": "Bearer " + process.env.DEEPSEEK_API_KEY
-            }
-          }, (res) => {
-            let body = "";
-            res.on("data", chunk => body += chunk);
-            res.on("end", () => {
-              try {
-                const resData = JSON.parse(body);
-                if (!resData.choices || !resData.choices[0]) {
-                  console.error("API 返回异常：", body);
-                  process.exit(1);
-                }
-                let reply = resData.choices[0].message.content;
-                // 清理多余的 markdown 代码块标记
-                reply = reply.replace(/^```markdown\n/, "").replace(/\n```$/, "");
-                fs.writeFileSync(fileName, reply);
-                console.log("文章生成成功，文件保存为：" + fileName);
-              } catch (e) {
-                console.error("解析 API 响应失败：", e, body);
-                process.exit(1);
-              }
-            });
-          });
+              "Authorization": f"Bearer {api_key}"
+          }
+          data = {
+              "model": "deepseek-chat",
+              "messages": [
+                  {"role": "system", "content": "你是一位优秀的 AI 科技博主，擅长筛选并撰写高质量的 AI 前沿动态。"},
+                  {"role": "user", "content": prompt}
+              ],
+              "temperature": 0.7
+          }
 
-          req.on("error", (e) => {
-            console.error("请求失败：", e);
-            process.exit(1);
-          });
+          response = requests.post(url, json=data, headers=headers)
+          response.raise_for_status()
+          content = response.json()["choices"][0]["message"]["content"]
 
-          req.write(data);
-          req.end();
-          '
+          # 生成符合 Hexo 标准 Front-matter 头部的 Markdown 文件
+          file_content = f"""---
+          title: AI 每日资讯速递 ({today_str})
+          date: {today_str} 08:00:00
+          tags:
+            - AI
+            - 科技新闻
+          ---
 
-      - name: Commit & Push New Post
+          {content}
+          """
+
+          os.makedirs("source/_posts", exist_ok=True)
+          with open(file_name, "w", encoding="utf-8") as f:
+              f.write(file_content.strip())
+
+          print(f"Post created successfully: {file_name}")
+          EOF
+
+      - name: Deploy Hexo Site
+        run: |
+          npm install
+          npx hexo clean
+          npx hexo generate
+
+      - name: Commit and Push to Repository
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add source/_posts/
-          git commit -m "docs: auto-generate daily AI news post" || exit 0
+          git commit -m "Auto: generate AI news for $(date +'%Y-%m-%d')" || exit 0
           git push
